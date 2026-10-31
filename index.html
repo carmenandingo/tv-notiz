@@ -683,7 +683,7 @@
       }
       $('thumbs').appendChild(box);
     });
-    $('ontv-title').textContent = list.length ? 'Auf dem TV (' + list.length + ')' : 'Auf dem TV';
+    $('ontv-title').textContent = list.length ? 'Auf dem TV (' + list.length + ')' : 'Auf dem TV (keine Bilder)';
   }
   /** That picture on the TV now if the frame runs, else first when it starts. */
   function showNow(id, box) {
@@ -791,10 +791,49 @@
     document.body.classList.toggle('art', art);
     $('tab-note').classList.toggle('on', !art);
     $('tab-art').classList.toggle('on', art);
-    if (!art) fit();
+    try { localStorage.setItem('tvnotiz.tab', art ? 'art' : 'note'); } catch (e) {}   // a reload comes back here
+    if (art) askTv(); else fit();
   }
   $('tab-note').onclick = function () { tab(false); };
   $('tab-art').onclick = function () { tab(true); };
+
+  /**
+   * What's on the TV, from the TV: a question on the channel, and the TV (with Free My TV open) answers with small
+   * pictures of all it has, from any phone. Until it answers, or if it's off, the list last seen stays.
+   */
+  var asking = 0;
+  function askTv() {
+    var id = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), since = Math.floor(Date.now() / 1000) - 5;
+    var mine = ++asking, tries = 0;
+    $('ontv-title').textContent = 'Auf dem TV (frage den TV …)';
+    put(JSON.stringify({v: 1, art: 'listreq', id: id})).then(function () {
+      (function look() {
+        if (mine !== asking) return;
+        fetch('https://ntfy.sh/' + encodeURIComponent(TOPIC) + '/json?poll=1&since=' + since).then(function (r) { return r.text(); }).then(function (text) {
+          // The answer: an attachment, or (when ntfy refused one) the list in parts, with tiny pictures.
+          var url = null, parts = [], n = 0;
+          text.split('\n').forEach(function (line) {
+            try {
+              var ev = JSON.parse(line), m = JSON.parse(ev.message);
+              if (m.art !== 'list' || m.re !== id) return;
+              if (ev.attachment) url = ev.attachment.url;
+              else if (typeof m.d === 'string') { parts[m.i] = m.d; n = m.n; }
+            } catch (e) {}
+          });
+          var whole = n && parts.filter(function (x) { return x !== undefined; }).length === n;
+          if (url || whole) return (url ? fetch(url).then(function (r) { return r.json(); }) : Promise.resolve(JSON.parse(parts.join('')))).then(function (list) {
+            if (mine !== asking) return;
+            var shown = list.sort(function (a, b) { return a.at - b.at; }).map(function (p) { return {id: p.id, src: p.t}; });
+            try { localStorage.setItem(SENT, JSON.stringify(shown)); } catch (e) {}
+            showSent();
+          });
+          if (++tries < 12) { setTimeout(look, 2000); return; }
+          showSent();
+          $('ontv-title').textContent += ', TV antwortet nicht. Ist Free My TV offen?';
+        }, function () { if (++tries < 12) setTimeout(look, 2000); });
+      })();
+    }, function (e) { showSent(); status(why(e), 'warn'); });
+  }
 
   // MARK: - Colors and sizes
 
@@ -856,6 +895,7 @@
 
   window.addEventListener('resize', fit);
   fit();
+  try { if (localStorage.getItem('tvnotiz.tab') === 'art') tab(true); } catch (e) {}
 })();
 </script>
 </body>
