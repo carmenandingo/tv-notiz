@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="TV-Notiz">
+<meta name="theme-color" content="#F4EFE6">
+<title>TV-Notiz</title>
+<style>
+  :root {
+    --bg: #F4EFE6; --paper: #FFFDF6; --ink: #1D1D1F; --muted: #6E6E73; --line: rgba(0,0,0,0.08);
+    --accent: #1D1D1F; --accent-ink: #FFFFFF; --ok: #2E7D4F; --warn: #B3261E;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141416; --ink: #F5F5F7; --muted: #A1A1A6; --line: rgba(255,255,255,0.12); --accent: #F5F5F7; --accent-ink: #141416; --ok: #6FCF97; --warn: #FF8A80; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); gap: 12px; overscroll-behavior: none; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  #status { font-size: 14px; color: var(--muted); text-align: right; }
+  #status.ok { color: var(--ok); } #status.warn { color: var(--warn); }
+  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { background: var(--paper); border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); touch-action: none; display: block; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; }
+  .group { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 34px; height: 34px; border-radius: 50%; border: 3px solid transparent; padding: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15); }
+  .dot.on { border-color: var(--ink); }
+  .size { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line); background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .size.on { border-color: var(--ink); }
+  .size span { display: block; border-radius: 50%; background: var(--ink); }
+  button.txt { height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-weight: 550; cursor: pointer; }
+  button.send { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); padding: 0 22px; }
+  button:disabled { opacity: 0.45; }
+  .hint { font-size: 13px; color: var(--muted); text-align: center; }
+  #setup { display: none; max-width: 520px; margin: 40px auto; }
+  .nosetup #setup { display: block; } .nosetup #app { display: none; }
+  #app { display: contents; }
+  .controls { display: flex; flex-direction: column; gap: 12px; }
+  /* A phone on its side: the page fills the height, the controls go in a column beside it. */
+  @media (orientation: landscape) and (max-height: 520px) {
+    body { display: grid; grid-template-columns: 1fr 210px; grid-template-rows: auto 1fr; column-gap: 14px; row-gap: 8px;
+      padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+    header { grid-column: 1 / 3; }
+    #stage { grid-column: 1; grid-row: 2; }
+    .controls { grid-column: 2; grid-row: 2; justify-content: center; gap: 10px; }
+    .bar { flex-direction: column; align-items: stretch; gap: 10px; }
+    .group { flex-wrap: wrap; justify-content: center; }
+    .controls .bar:last-of-type .group { display: grid; grid-template-columns: 1fr 1fr; }
+    #remove { grid-column: 1 / 3; }
+    .hint { display: none; }
+    .dot { width: 30px; height: 30px; }
+    #colors { display: grid; grid-template-columns: repeat(3, 30px); gap: 12px 18px; }
+    button.txt { height: 40px; padding: 0 10px; }
+  }
+</style>
+</head>
+<body>
+<div id="setup">
+  <h1>TV-Notiz</h1>
+  <p>Diese Seite braucht den Link mit eurem Kanal (er endet auf <code>#…</code>). Öffne den Link, den du bekommen hast, und leg ihn auf den Home-Bildschirm.</p>
+</div>
+<div id="app">
+  <header>
+    <h1>Notiz an den TV</h1>
+    <div id="status">Bereit</div>
+  </header>
+  <div id="stage"><canvas id="pad"></canvas></div>
+  <div class="controls">
+    <div class="bar">
+      <div class="group" id="colors"></div>
+      <div class="group" id="sizes"></div>
+    </div>
+    <div class="bar">
+      <div class="group">
+        <button class="txt" id="undo">Zurück</button>
+        <button class="txt" id="clear">Leeren</button>
+        <button class="txt" id="remove">Vom TV nehmen</button>
+      </div>
+      <button class="txt send" id="send">Senden</button>
+    </div>
+    <div class="hint">Tipp: Handy quer halten, dann ist die Fläche größer.</div>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var TOPIC = decodeURIComponent((location.hash || '').slice(1));
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(TOPIC)) { document.body.className = 'nosetup'; return; }
+
+  var W = 1600, H = 900, CHUNK = 3000;
+  var COLORS = ['1D1D1F', 'D93636', 'E2557E', '2F6FDB', '2E9E5B', 'F2A93B'];
+  var SIZES = [6, 12, 24];
+  var pad = document.getElementById('pad'), ctx = pad.getContext('2d');
+  var strokes = [], current = null, color = COLORS[0], size = SIZES[1], scale = 1, busy = false;
+
+  function status(text, kind) {
+    var s = document.getElementById('status');
+    s.textContent = text;
+    s.className = kind || '';
+  }
+
+  // The page is 1600 × 900, as on the TV; the canvas fits the screen and draws at the device's pixel ratio.
+  function fit() {
+    var stage = document.getElementById('stage'), r = stage.getBoundingClientRect();
+    var w = Math.min(r.width, r.height * W / H), h = w * H / W, dpr = window.devicePixelRatio || 1;
+    pad.style.width = w + 'px';
+    pad.style.height = h + 'px';
+    pad.width = Math.round(w * dpr);
+    pad.height = Math.round(h * dpr);
+    scale = pad.width / W;
+    redraw();
+  }
+
+  function redraw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, pad.width, pad.height);
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (var i = 0; i < strokes.length; i++) paint(strokes[i]);
+    if (current) paint(current);
+    document.getElementById('undo').disabled = !strokes.length;
+    document.getElementById('clear').disabled = !strokes.length;
+    document.getElementById('send').disabled = !strokes.length || busy;
+  }
+
+  function paint(s) {
+    ctx.strokeStyle = ctx.fillStyle = '#' + s.c;
+    ctx.lineWidth = s.w;
+    var p = s.p;
+    if (p.length === 2) { ctx.beginPath(); ctx.arc(p[0], p[1], s.w / 2, 0, Math.PI * 2); ctx.fill(); return; }
+    ctx.beginPath();
+    ctx.moveTo(p[0], p[1]);
+    for (var i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+    ctx.stroke();
+  }
+
+  function point(e) {
+    var r = pad.getBoundingClientRect();
+    return [Math.round((e.clientX - r.left) / r.width * W), Math.round((e.clientY - r.top) / r.height * H)];
+  }
+
+  pad.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    pad.setPointerCapture(e.pointerId);
+    current = {c: color, w: size, p: point(e)};
+    redraw();
+  });
+  pad.addEventListener('pointermove', function (e) {
+    if (!current) return;
+    var events = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
+    if (!events.length) events = [e];
+    for (var i = 0; i < events.length; i++) {
+      var q = point(events[i]), p = current.p, dx = q[0] - p[p.length - 2], dy = q[1] - p[p.length - 1];
+      if (dx * dx + dy * dy >= 9) p.push(q[0], q[1]);   // 3 px apart: smooth enough, and small to send
+    }
+    redraw();
+  });
+  function end() { if (current) { strokes.push(current); current = null; redraw(); } }
+  pad.addEventListener('pointerup', end);
+  pad.addEventListener('pointercancel', end);
+
+  // "RRGGBB,width,x,y,dx,dy,…" per stroke, ';' between: what the TV reads.
+  function encode() {
+    return strokes.map(function (s) {
+      var p = s.p, out = [s.c, s.w, p[0], p[1]];
+      for (var i = 2; i < p.length; i += 2) out.push(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+      return out.join(',');
+    }).join(';');
+  }
+
+  function publish(text) {
+    var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    var parts = [];
+    for (var i = 0; i < text.length; i += CHUNK) parts.push(text.slice(i, i + CHUNK));
+    if (!parts.length) parts.push('');
+    var i = 0;
+    function next() {
+      if (i >= parts.length) return Promise.resolve();
+      var body = JSON.stringify({v: 1, id: id, i: i, n: parts.length, d: parts[i]});
+      i++;
+      return fetch('https://ntfy.sh/' + encodeURIComponent(TOPIC), {method: 'POST', body: body}).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return next();
+      });
+    }
+    return next();
+  }
+
+  function sendNow(text, done) {
+    busy = true;
+    redraw();
+    status('Wird gesendet …');
+    publish(text).then(function () {
+      busy = false;
+      status(done, 'ok');
+      redraw();
+    }, function () {
+      busy = false;
+      status('Senden hat nicht geklappt. Internet da?', 'warn');
+      redraw();
+    });
+  }
+
+  document.getElementById('send').onclick = function () {
+    if (!strokes.length || busy) return;
+    sendNow(encode(), 'Gesendet. Der TV zeigt sie in spätestens einer Minute.');
+  };
+  document.getElementById('remove').onclick = function () {
+    if (busy || !confirm('Die Notiz vom TV nehmen?')) return;
+    sendNow('', 'Notiz wird vom TV genommen.');
+  };
+  document.getElementById('undo').onclick = function () { strokes.pop(); redraw(); };
+  document.getElementById('clear').onclick = function () { if (strokes.length && confirm('Alles löschen?')) { strokes = []; redraw(); } };
+
+  var colorBox = document.getElementById('colors');
+  COLORS.forEach(function (c) {
+    var b = document.createElement('button');
+    b.className = 'dot' + (c === color ? ' on' : '');
+    b.style.background = '#' + c;
+    b.setAttribute('aria-label', 'Farbe ' + c);
+    b.onclick = function () {
+      color = c;
+      [].forEach.call(colorBox.children, function (x) { x.classList.toggle('on', x === b); });
+    };
+    colorBox.appendChild(b);
+  });
+  var sizeBox = document.getElementById('sizes');
+  SIZES.forEach(function (w) {
+    var b = document.createElement('button'), s = document.createElement('span');
+    b.className = 'size' + (w === size ? ' on' : '');
+    s.style.width = s.style.height = (6 + w * 0.7) + 'px';
+    b.appendChild(s);
+    b.setAttribute('aria-label', 'Strichstärke ' + w);
+    b.onclick = function () {
+      size = w;
+      [].forEach.call(sizeBox.children, function (x) { x.classList.toggle('on', x === b); });
+    };
+    sizeBox.appendChild(b);
+  });
+
+  window.addEventListener('resize', fit);
+  fit();
+})();
+</script>
+</body>
+</html>
