@@ -68,7 +68,13 @@
   .seg button.on { background: var(--field); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
   #pending { display: flex; flex-direction: column; gap: 14px; }
   .crop { position: relative; }
-  .crop canvas { width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: 12px; background: #000; cursor: grab; }
+  .crop canvas { width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: 12px; background: #000; cursor: pointer; touch-action: auto; }
+  #editor { display: none; position: fixed; inset: 0; z-index: 10; background: #000; flex-direction: column; align-items: stretch; justify-content: center; gap: 16px;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .editing #editor { display: flex; }
+  #editor canvas { width: min(100%, calc(72vh * 16 / 9)); align-self: center; aspect-ratio: 16 / 9; border-radius: 12px; touch-action: none; background: #111; }
+  #editor p { color: rgba(255,255,255,0.7); text-align: center; margin: 0; font-size: 14px; }
+  #editor button { align-self: center; height: 48px; padding: 0 40px; border-radius: 12px; border: 0; background: #fff; color: #000; font: inherit; font-weight: 650; }
   .crop .tip { font-size: 13px; color: var(--muted); margin-top: 4px; }
   #artsend { display: none; }
   .has-pending #artsend { display: block; }
@@ -143,6 +149,11 @@
     <div class="hint" style="text-align:left">Antippen zeigt das Bild als Nächstes, × löscht es vom TV.</div>
     <div id="thumbs"></div>
     <button class="txt" id="artclear">Alle Bilder vom TV löschen</button>
+  </div>
+  <div id="editor">
+    <canvas id="editcanvas"></canvas>
+    <p>Ziehen wählt den Ausschnitt, zwei Finger zoomen. So erscheint es am TV.</p>
+    <button id="editdone">Fertig</button>
   </div>
   <input type="file" id="file" accept="image/*">
   <input type="file" id="artfile" accept="image/*" multiple>
@@ -420,7 +431,7 @@
     var f = this.files && this.files[0];
     if (!f) return;
     status('Foto wird vorbereitet …');
-    shrink(f, 1600, 0.82, function (blob, w, h) {
+    shrink(f, 1600, 0.75, function (blob, w, h) {
       var img = new Image();
       img.onload = function () {
         var k = Math.min(W * 0.9 / w, H * 0.9 / h);   // in its own shape, as large as fits
@@ -437,12 +448,18 @@
 
   // MARK: - Sending
 
+  // ntfy.sh's free limits, per internet connection: 20 MB of pictures at a time (each kept 3 hours) and 250 messages a
+  // day. Past them it answers 413 or 429, and that's said as it is, not as a connection problem.
+  var LIMIT = 'Limit des Gratis-Dienstes erreicht. Bilder werden nach 3 Stunden wieder frei, dann nochmal senden.';
   function put(body, headers) {
     return fetch('https://ntfy.sh/' + encodeURIComponent(TOPIC), {method: 'PUT', body: body, headers: headers || {}}).then(function (r) {
+      if (r.status === 413 || r.status === 429) throw new Error(LIMIT);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
   }
+  /** What to say when sending failed. */
+  function why(e) { return e && e.message === LIMIT ? LIMIT : 'Hat nicht geklappt. Internet da?'; }
 
   function upload(blob) {
     return put(blob, {'Filename': 'foto.jpg'}).then(function (m) {
@@ -500,9 +517,9 @@
       busy = false;
       status(takeBack ? 'Notiz wird vom TV genommen.' : 'Gesendet.', 'ok');
       redraw();
-    }, function () {
+    }, function (e) {
       busy = false;
-      status('Senden hat nicht geklappt. Internet da?', 'warn');
+      status(why(e), 'warn');
       redraw();
     });
   }
@@ -516,7 +533,8 @@
 
   // MARK: - Picture frame: pictures the TV keeps and shows one after the other.
 
-  // Each chosen picture gets a 16:9 window, the TV's shape: drag to pick the part, two fingers to zoom in.
+  // Each chosen picture shows in the list as its 16:9 part (the TV's shape); tapping it opens the editor, a screen of
+  // its own, where dragging picks the part and two fingers zoom in. The list itself scrolls like any page.
   // The crop is kept as its center in the picture (cx, cy) and a zoom over "just covers the window" (z ≥ 1).
   var crops = [], SENT = 'tvnotiz.sent';
 
@@ -528,8 +546,9 @@
     return s;
   }
 
-  function cropDraw(c) {
-    var cv = c.canvas, dpr = window.devicePixelRatio || 1, w = cv.clientWidth * dpr;
+  function cropDraw(c, cv) {
+    cv = cv || c.canvas;
+    var dpr = window.devicePixelRatio || 1, w = cv.clientWidth * dpr;
     if (!w) return;
     cv.width = Math.round(w);
     cv.height = Math.round(w * 9 / 16);
@@ -543,13 +562,16 @@
     cv.height = 1080;
     var s = cropLayout(c, 1920, 1080);
     cv.getContext('2d').drawImage(c.img, 960 - c.cx * s, 540 - c.cy * s, c.img.naturalWidth * s, c.img.naturalHeight * s);
-    cv.toBlob(done, 'image/jpeg', 0.86);
+    cv.toBlob(done, 'image/jpeg', 0.78);
   }
 
-  function cropGestures(c) {
-    var cv = c.canvas, fingers = {}, start = null;
+  var editing = null;
+
+  /** The editor's gestures, on whatever picture is open in it. */
+  (function () {
+    var cv = $('editcanvas'), fingers = {}, start = null;
     function begin() {
-      var ids = Object.keys(fingers);
+      var c = editing, ids = Object.keys(fingers);
       start = {cx: c.cx, cy: c.cy, z: c.z, p: fingers[ids[0]].slice(), d: 0};
       if (ids.length >= 2) {
         var a = fingers[ids[0]], b = fingers[ids[1]];
@@ -564,7 +586,8 @@
       begin();
     });
     cv.addEventListener('pointermove', function (e) {
-      if (!(e.pointerId in fingers) || !start) return;
+      var c = editing;
+      if (!c || !(e.pointerId in fingers) || !start) return;
       fingers[e.pointerId] = [e.clientX, e.clientY];
       var ids = Object.keys(fingers), p = fingers[ids[0]];
       if (ids.length >= 2 && start.d) {
@@ -576,17 +599,30 @@
       var s = Math.max(cv.width / c.img.naturalWidth, cv.height / c.img.naturalHeight) * c.z / dpr;
       c.cx = start.cx - (p[0] - start.p[0]) / s;
       c.cy = start.cy - (p[1] - start.p[1]) / s;
-      cropDraw(c);
+      cropDraw(c, cv);
     });
     function up(e) { delete fingers[e.pointerId]; if (Object.keys(fingers).length) begin(); else start = null; }
     cv.addEventListener('pointerup', up);
     cv.addEventListener('pointercancel', up);
     cv.addEventListener('wheel', function (e) {   // a mouse: the wheel zooms
       e.preventDefault();
-      c.z = Math.max(1, Math.min(6, c.z * (e.deltaY < 0 ? 1.1 : 0.9)));
-      cropDraw(c);
+      if (!editing) return;
+      editing.z = Math.max(1, Math.min(6, editing.z * (e.deltaY < 0 ? 1.1 : 0.9)));
+      cropDraw(editing, cv);
     }, {passive: false});
+  })();
+
+  function openEditor(c) {
+    editing = c;
+    document.body.classList.add('editing');
+    cropDraw(c, $('editcanvas'));
   }
+  $('editdone').onclick = function () {
+    document.body.classList.remove('editing');
+    if (editing) cropDraw(editing);
+    editing = null;
+  };
+  window.addEventListener('resize', function () { if (editing) cropDraw(editing, $('editcanvas')); });
 
   function pendingChanged() {
     document.body.classList.toggle('has-pending', crops.length > 0);
@@ -605,7 +641,7 @@
         x.textContent = '×';
         x.setAttribute('aria-label', 'Bild entfernen');
         tip.className = 'tip';
-        tip.textContent = 'Ziehen wählt den Ausschnitt, zwei Finger zoomen.';
+        tip.textContent = 'Antippen, um den Ausschnitt zu wählen.';
         box.appendChild(cv);
         box.appendChild(x);
         box.appendChild(tip);
@@ -613,7 +649,7 @@
         var c = {img: img, canvas: cv, box: box, z: 1, cx: img.naturalWidth / 2, cy: img.naturalHeight / 2};
         crops.push(c);
         x.onclick = function () { crops.splice(crops.indexOf(c), 1); box.remove(); pendingChanged(); };
-        cropGestures(c);
+        cv.onclick = function () { openEditor(c); };
         cropDraw(c);
         pendingChanged();
       };
@@ -651,7 +687,7 @@
     put(JSON.stringify({v: 1, art: 'show', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: id})).then(function () {
       [].forEach.call($('thumbs').children, function (b) { b.classList.toggle('picked', b === box); });
       status('Kommt am TV als Nächstes.', 'ok');
-    }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
+    }, function (e) { status(why(e), 'warn'); });
   }
   function removeSent(id) {
     put(JSON.stringify({v: 1, art: 'remove', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: id})).then(function () {
@@ -659,7 +695,7 @@
       try { localStorage.setItem(SENT, JSON.stringify(list)); } catch (e) {}
       showSent();
       status('Bild vom TV gelöscht.', 'ok');
-    }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
+    }, function (e) { status(why(e), 'warn'); });
   }
   function rememberSent(blob, id) {
     var t = document.createElement('canvas'), img = new Image();
@@ -700,11 +736,11 @@
         crops.shift();
         c.box.remove();
         next();
-      }, function () {   // stop here: the rest stays in the list, to send again
+      }, function (e) {   // stop here: the rest stays in the list, to send again
         busy = false;
         $('artsend').disabled = $('artadd').disabled = false;
         pendingChanged();
-        status((done ? done + ' gesendet, dann' : 'Das') + ' ging nicht raus. Internet da? Nochmal senden.', 'warn');
+        status((done ? done + ' gesendet. ' : '') + why(e), 'warn');
       });
     }
     next();
@@ -715,7 +751,7 @@
       try { localStorage.removeItem(SENT); } catch (e) {}
       showSent();
       status('Bilder werden vom TV gelöscht.', 'ok');
-    }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
+    }, function (e) { status(why(e), 'warn'); });
   };
   showSent();
   // How the TV shows them: sent at once, kept here to show what was picked last (the TV can't be asked).
@@ -733,10 +769,10 @@
           every: frame.every, order: frame.order})).then(function () {
           try { localStorage.setItem(FRAME, JSON.stringify(frame)); } catch (e) {}
           status('Am TV eingestellt.', 'ok');
-        }, function () {
+        }, function (e) {
           frame[key] = before;
           paint();
-          status('Hat nicht geklappt. Internet da?', 'warn');
+          status(why(e), 'warn');
         });
       };
       box.appendChild(b);
