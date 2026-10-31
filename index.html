@@ -10,11 +10,11 @@
 <title>TV-Notiz</title>
 <style>
   :root {
-    --bg: #F4EFE6; --paper: #FFFDF6; --ink: #1D1D1F; --muted: #6E6E73; --line: rgba(0,0,0,0.08);
+    --bg: #F4EFE6; --paper: #FFFDF6; --ink: #1D1D1F; --muted: #6E6E73; --line: rgba(0,0,0,0.1); --field: #FFFFFF;
     --accent: #1D1D1F; --accent-ink: #FFFFFF; --ok: #2E7D4F; --warn: #B3261E;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #141416; --ink: #F5F5F7; --muted: #A1A1A6; --line: rgba(255,255,255,0.12); --accent: #F5F5F7; --accent-ink: #141416; --ok: #6FCF97; --warn: #FF8A80; }
+    :root { --bg: #141416; --ink: #F5F5F7; --muted: #A1A1A6; --line: rgba(255,255,255,0.14); --field: #1F1F22; --accent: #F5F5F7; --accent-ink: #141416; --ok: #6FCF97; --warn: #FF8A80; }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
@@ -26,36 +26,41 @@
   #status.ok { color: var(--ok); } #status.warn { color: var(--warn); }
   #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
   canvas { background: var(--paper); border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); touch-action: none; display: block; }
+  .controls { display: flex; flex-direction: column; gap: 12px; }
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; }
-  .group { display: flex; align-items: center; gap: 8px; }
+  .group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .dot { width: 34px; height: 34px; border-radius: 50%; border: 3px solid transparent; padding: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15); }
   .dot.on { border-color: var(--ink); }
   .size { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line); background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .size.on { border-color: var(--ink); }
   .size span { display: block; border-radius: 50%; background: var(--ink); }
-  button.txt { height: 44px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-weight: 550; cursor: pointer; }
+  button.txt { height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-weight: 550; cursor: pointer; }
   button.send { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); padding: 0 22px; }
   button:disabled { opacity: 0.45; }
+  #textbar { display: none; gap: 8px; align-items: stretch; }
+  #textbar.on { display: flex; }
+  #textbar textarea { flex: 1; min-width: 0; resize: none; border-radius: 12px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font: inherit; font-size: 17px; padding: 10px 12px; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; }
+  #file { display: none; }
   #setup { display: none; max-width: 520px; margin: 40px auto; }
   .nosetup #setup { display: block; } .nosetup #app { display: none; }
   #app { display: contents; }
-  .controls { display: flex; flex-direction: column; gap: 12px; }
   /* A phone on its side: the page fills the height, the controls go in a column beside it. */
   @media (orientation: landscape) and (max-height: 520px) {
-    body { display: grid; grid-template-columns: 1fr 210px; grid-template-rows: auto 1fr; column-gap: 14px; row-gap: 8px;
+    body { display: grid; grid-template-columns: 1fr 230px; grid-template-rows: auto 1fr; column-gap: 14px; row-gap: 8px;
       padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
     header { grid-column: 1 / 3; }
     #stage { grid-column: 1; grid-row: 2; }
-    .controls { grid-column: 2; grid-row: 2; justify-content: center; gap: 10px; }
-    .bar { flex-direction: column; align-items: stretch; gap: 10px; }
-    .group { flex-wrap: wrap; justify-content: center; }
-    .controls .bar:last-of-type .group { display: grid; grid-template-columns: 1fr 1fr; }
+    .controls { grid-column: 2; grid-row: 2; justify-content: center; gap: 8px; overflow-y: auto; }
+    .bar { flex-direction: column; align-items: stretch; gap: 8px; }
+    .group { justify-content: center; }
+    #colors { display: grid; grid-template-columns: repeat(4, 30px); gap: 8px 14px; }
+    .tools { display: grid !important; grid-template-columns: 1fr 1fr; }
     #remove { grid-column: 1 / 3; }
     .hint { display: none; }
     .dot { width: 30px; height: 30px; }
-    #colors { display: grid; grid-template-columns: repeat(3, 30px); gap: 12px 18px; }
-    button.txt { height: 40px; padding: 0 10px; }
+    button.txt { height: 38px; padding: 0 8px; font-size: 15px; }
+    #textbar { flex-direction: column; }
   }
 </style>
 </head>
@@ -75,16 +80,23 @@
       <div class="group" id="colors"></div>
       <div class="group" id="sizes"></div>
     </div>
+    <div id="textbar">
+      <textarea id="text" rows="2" placeholder="Text schreiben …" enterkeyhint="done"></textarea>
+      <button class="txt" id="addtext">Einfügen</button>
+    </div>
     <div class="bar">
-      <div class="group">
+      <div class="group tools">
+        <button class="txt" id="textbtn">Text</button>
+        <button class="txt" id="photobtn">Foto</button>
         <button class="txt" id="undo">Zurück</button>
         <button class="txt" id="clear">Leeren</button>
         <button class="txt" id="remove">Vom TV nehmen</button>
       </div>
       <button class="txt send" id="send">Senden</button>
     </div>
-    <div class="hint">Tipp: Handy quer halten, dann ist die Fläche größer.</div>
+    <div class="hint">Text mit dem Finger verschieben. Handy quer halten, dann ist die Fläche größer.</div>
   </div>
+  <input type="file" id="file" accept="image/*">
 </div>
 <script>
 (function () {
@@ -92,21 +104,25 @@
   var TOPIC = decodeURIComponent((location.hash || '').slice(1));
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(TOPIC)) { document.body.className = 'nosetup'; return; }
 
-  var W = 1600, H = 900, CHUNK = 3000;
-  var COLORS = ['1D1D1F', 'D93636', 'E2557E', '2F6FDB', '2E9E5B', 'F2A93B'];
-  var SIZES = [6, 12, 24];
+  var W = 1600, H = 900, CHUNK = 3000, FONT = '600 {s}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  var COLORS = ['1D1D1F', 'FFFFFF', 'D93636', 'E2557E', '2F6FDB', '2E9E5B', 'F2A93B'];
+  var SIZES = [6, 12, 24], TEXT_SIZES = [56, 90, 140];
   var pad = document.getElementById('pad'), ctx = pad.getContext('2d');
-  var strokes = [], current = null, color = COLORS[0], size = SIZES[1], scale = 1, busy = false;
+  // items: strokes {c, w, p: [x, y, …]} and texts {text, c, s, x, y}, in the order they were made (for Zurück).
+  var items = [], current = null, dragging = null, color = COLORS[0], sizeIndex = 1, scale = 1, busy = false;
+  var photo = null;   // {img, blob}: the photo under everything, already cut to 1600 × 900
+
+  function $(id) { return document.getElementById(id); }
 
   function status(text, kind) {
-    var s = document.getElementById('status');
+    var s = $('status');
     s.textContent = text;
     s.className = kind || '';
   }
 
   // The page is 1600 × 900, as on the TV; the canvas fits the screen and draws at the device's pixel ratio.
   function fit() {
-    var stage = document.getElementById('stage'), r = stage.getBoundingClientRect();
+    var r = $('stage').getBoundingClientRect();
     var w = Math.min(r.width, r.height * W / H), h = w * H / W, dpr = window.devicePixelRatio || 1;
     pad.style.width = w + 'px';
     pad.style.height = h + 'px';
@@ -120,24 +136,53 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, pad.width, pad.height);
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    if (photo) ctx.drawImage(photo.img, 0, 0, W, H);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (var i = 0; i < strokes.length; i++) paint(strokes[i]);
+    for (var i = 0; i < items.length; i++) paint(items[i]);
     if (current) paint(current);
-    document.getElementById('undo').disabled = !strokes.length;
-    document.getElementById('clear').disabled = !strokes.length;
-    document.getElementById('send').disabled = !strokes.length || busy;
+    var empty = !items.length && !photo;
+    $('undo').disabled = !items.length;
+    $('clear').disabled = empty;
+    $('send').disabled = empty || busy;
+    $('photobtn').textContent = photo ? 'Foto weg' : 'Foto';
   }
 
-  function paint(s) {
-    ctx.strokeStyle = ctx.fillStyle = '#' + s.c;
-    ctx.lineWidth = s.w;
-    var p = s.p;
-    if (p.length === 2) { ctx.beginPath(); ctx.arc(p[0], p[1], s.w / 2, 0, Math.PI * 2); ctx.fill(); return; }
+  function paint(it) {
+    if (it.text !== undefined) {
+      ctx.font = FONT.replace('{s}', it.s);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#' + it.c;
+      if (it.c === 'FFFFFF') { ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 14; }   // white stays readable on a photo
+      var lines = it.text.split('\n'), lh = it.s * 1.2;
+      for (var l = 0; l < lines.length; l++) ctx.fillText(lines[l], it.x, it.y + (l - (lines.length - 1) / 2) * lh);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      return;
+    }
+    ctx.strokeStyle = ctx.fillStyle = '#' + it.c;
+    ctx.lineWidth = it.w;
+    var p = it.p;
+    if (p.length === 2) { ctx.beginPath(); ctx.arc(p[0], p[1], it.w / 2, 0, Math.PI * 2); ctx.fill(); return; }
     ctx.beginPath();
     ctx.moveTo(p[0], p[1]);
     for (var i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
     ctx.stroke();
+  }
+
+  /** The text under a point, newest first. */
+  function textAt(q) {
+    for (var i = items.length - 1; i >= 0; i--) {
+      var it = items[i];
+      if (it.text === undefined) continue;
+      ctx.font = FONT.replace('{s}', it.s);
+      var lines = it.text.split('\n'), w = 0;
+      for (var l = 0; l < lines.length; l++) w = Math.max(w, ctx.measureText(lines[l]).width);
+      var h = lines.length * it.s * 1.2;
+      if (Math.abs(q[0] - it.x) <= w / 2 + 24 && Math.abs(q[1] - it.y) <= h / 2 + 24) return it;
+    }
+    return null;
   }
 
   function point(e) {
@@ -147,56 +192,82 @@
 
   pad.addEventListener('pointerdown', function (e) {
     e.preventDefault();
-    pad.setPointerCapture(e.pointerId);
-    current = {c: color, w: size, p: point(e)};
+    try { pad.setPointerCapture(e.pointerId); } catch (x) {}
+    var q = point(e), t = textAt(q);
+    if (t) { dragging = {it: t, dx: t.x - q[0], dy: t.y - q[1]}; return; }
+    current = {c: color, w: SIZES[sizeIndex], p: q};
     redraw();
   });
   pad.addEventListener('pointermove', function (e) {
+    if (dragging) {
+      var q = point(e);
+      dragging.it.x = Math.max(0, Math.min(W, q[0] + dragging.dx));
+      dragging.it.y = Math.max(0, Math.min(H, q[1] + dragging.dy));
+      redraw();
+      return;
+    }
     if (!current) return;
     var events = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
     if (!events.length) events = [e];
     for (var i = 0; i < events.length; i++) {
-      var q = point(events[i]), p = current.p, dx = q[0] - p[p.length - 2], dy = q[1] - p[p.length - 1];
-      if (dx * dx + dy * dy >= 9) p.push(q[0], q[1]);   // 3 px apart: smooth enough, and small to send
+      var p = current.p, r = point(events[i]), dx = r[0] - p[p.length - 2], dy = r[1] - p[p.length - 1];
+      if (dx * dx + dy * dy >= 9) p.push(r[0], r[1]);   // 3 px apart: smooth enough, and small to send
     }
     redraw();
   });
-  function end() { if (current) { strokes.push(current); current = null; redraw(); } }
+  function end() {
+    dragging = null;
+    if (current) { items.push(current); current = null; }
+    redraw();
+  }
   pad.addEventListener('pointerup', end);
   pad.addEventListener('pointercancel', end);
 
-  // "RRGGBB,width,x,y,dx,dy,…" per stroke, ';' between: what the TV reads.
-  function encode() {
-    return strokes.map(function (s) {
-      var p = s.p, out = [s.c, s.w, p[0], p[1]];
-      for (var i = 2; i < p.length; i += 2) out.push(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
-      return out.join(',');
-    }).join(';');
+  // ';' between items. A stroke: "RRGGBB,width,x,y,dx,dy,…". A text: "T,RRGGBB,size,x,y,<text, URI-encoded>".
+  // The photo, first: "P,<its address on ntfy, URI-encoded>".
+  function encode(photoUrl) {
+    var out = photoUrl ? ['P,' + encodeURIComponent(photoUrl)] : [];
+    for (var n = 0; n < items.length; n++) {
+      var it = items[n];
+      if (it.text !== undefined) { out.push(['T', it.c, it.s, it.x, it.y, encodeURIComponent(it.text)].join(',')); continue; }
+      var p = it.p, f = [it.c, it.w, p[0], p[1]];
+      for (var i = 2; i < p.length; i += 2) f.push(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+      out.push(f.join(','));
+    }
+    return out.join(';');
+  }
+
+  function post(body, headers) {
+    return fetch('https://ntfy.sh/' + encodeURIComponent(TOPIC), {method: 'PUT', body: body, headers: headers || {}}).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
   }
 
   function publish(text) {
-    var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    var parts = [];
-    for (var i = 0; i < text.length; i += CHUNK) parts.push(text.slice(i, i + CHUNK));
+    var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6), parts = [], i = 0;
+    for (var k = 0; k < text.length; k += CHUNK) parts.push(text.slice(k, k + CHUNK));
     if (!parts.length) parts.push('');
-    var i = 0;
     function next() {
       if (i >= parts.length) return Promise.resolve();
       var body = JSON.stringify({v: 1, id: id, i: i, n: parts.length, d: parts[i]});
       i++;
-      return fetch('https://ntfy.sh/' + encodeURIComponent(TOPIC), {method: 'POST', body: body}).then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return next();
-      });
+      return post(body).then(next);
     }
     return next();
   }
 
-  function sendNow(text, done) {
+  function sendNow(withPhoto, done) {
     busy = true;
     redraw();
-    status('Wird gesendet …');
-    publish(text).then(function () {
+    status(withPhoto ? 'Foto wird hochgeladen …' : 'Wird gesendet …');
+    var upload = withPhoto ? post(photo.blob, {'Filename': 'foto.jpg'}).then(function (m) { return m.attachment && m.attachment.url; })
+                           : Promise.resolve(null);
+    upload.then(function (url) {
+      if (withPhoto && !url) throw new Error('no attachment');
+      status('Wird gesendet …');
+      return publish(withPhoto === null ? '' : encode(url));
+    }).then(function () {
       busy = false;
       status(done, 'ok');
       redraw();
@@ -207,18 +278,64 @@
     });
   }
 
-  document.getElementById('send').onclick = function () {
-    if (!strokes.length || busy) return;
-    sendNow(encode(), 'Gesendet. Der TV zeigt sie in spätestens einer Minute.');
+  $('send').onclick = function () {
+    if (busy || (!items.length && !photo)) return;
+    sendNow(!!photo, 'Gesendet.');
   };
-  document.getElementById('remove').onclick = function () {
+  $('remove').onclick = function () {
     if (busy || !confirm('Die Notiz vom TV nehmen?')) return;
-    sendNow('', 'Notiz wird vom TV genommen.');
+    sendNow(null, 'Notiz wird vom TV genommen.');
   };
-  document.getElementById('undo').onclick = function () { strokes.pop(); redraw(); };
-  document.getElementById('clear').onclick = function () { if (strokes.length && confirm('Alles löschen?')) { strokes = []; redraw(); } };
+  $('undo').onclick = function () { items.pop(); redraw(); };
+  $('clear').onclick = function () { items = []; photo = null; redraw(); };
 
-  var colorBox = document.getElementById('colors');
+  // Text: typed below, placed in the middle, then moved with a finger.
+  $('textbtn').onclick = function () {
+    var bar = $('textbar'), on = !bar.classList.contains('on');
+    bar.classList.toggle('on', on);
+    if (on) $('text').focus();
+  };
+  function addText() {
+    var t = $('text').value.replace(/\s+$/, '');
+    if (!t) return;
+    items.push({text: t, c: color, s: TEXT_SIZES[sizeIndex], x: W / 2, y: H / 2});
+    $('text').value = '';
+    $('text').blur();
+    $('textbar').classList.remove('on');
+    redraw();
+  }
+  $('addtext').onclick = addText;
+  $('text').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addText(); } });
+
+  // Photo: cut to 16:9 (the middle of it), 1600 × 900, as a JPEG small enough to send quickly.
+  $('photobtn').onclick = function () {
+    if (photo) { photo = null; redraw(); return; }
+    $('file').value = '';
+    $('file').click();
+  };
+  $('file').onchange = function () {
+    var f = this.files && this.files[0];
+    if (!f) return;
+    status('Foto wird vorbereitet …');
+    var url = URL.createObjectURL(f), src = new Image();
+    src.onload = function () {
+      var c = document.createElement('canvas'), k = Math.max(W / src.naturalWidth, H / src.naturalHeight);
+      c.width = W;
+      c.height = H;
+      var w = src.naturalWidth * k, h = src.naturalHeight * k;
+      c.getContext('2d').drawImage(src, (W - w) / 2, (H - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      c.toBlob(function (blob) {
+        var img = new Image();
+        img.onload = function () { photo = {img: img, blob: blob}; status('Bereit'); redraw(); };
+        img.src = URL.createObjectURL(blob);
+      }, 'image/jpeg', 0.82);
+    };
+    src.onerror = function () { status('Dieses Foto geht leider nicht.', 'warn'); };
+    src.src = url;
+  };
+
+  var colorBox = $('colors');
   COLORS.forEach(function (c) {
     var b = document.createElement('button');
     b.className = 'dot' + (c === color ? ' on' : '');
@@ -230,15 +347,15 @@
     };
     colorBox.appendChild(b);
   });
-  var sizeBox = document.getElementById('sizes');
-  SIZES.forEach(function (w) {
+  var sizeBox = $('sizes');
+  SIZES.forEach(function (w, i) {
     var b = document.createElement('button'), s = document.createElement('span');
-    b.className = 'size' + (w === size ? ' on' : '');
+    b.className = 'size' + (i === sizeIndex ? ' on' : '');
     s.style.width = s.style.height = (6 + w * 0.7) + 'px';
     b.appendChild(s);
-    b.setAttribute('aria-label', 'Strichstärke ' + w);
+    b.setAttribute('aria-label', 'Größe ' + (i + 1));
     b.onclick = function () {
-      size = w;
+      sizeIndex = i;
       [].forEach.call(sizeBox.children, function (x) { x.classList.toggle('on', x === b); });
     };
     sizeBox.appendChild(b);
