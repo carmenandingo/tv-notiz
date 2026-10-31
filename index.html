@@ -52,9 +52,18 @@
   .art #note-view { display: none; } .art #art-view { display: flex; }
   #art-view h2 { font-size: 22px; margin: 6px 0 0; letter-spacing: -0.01em; }
   #art-view p { margin: 0; color: var(--muted); }
+  #art-view > * { flex-shrink: 0; }
   #art-view button.txt { width: 100%; height: 52px; }
   #thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
   #thumbs img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; display: block; }
+  #art-view h3 { font-size: 17px; margin: 8px 0 0; }
+  #pending { display: flex; flex-direction: column; gap: 14px; }
+  .crop { position: relative; }
+  .crop canvas { width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: 12px; background: #000; cursor: grab; }
+  .crop .x { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 20px; line-height: 34px; cursor: pointer; }
+  .crop .tip { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  #artsend { display: none; }
+  .has-pending #artsend { display: block; }
   /* A phone on its side: the page fills the height, the controls go in a column beside it. */
   @media (orientation: landscape) and (max-height: 520px) {
     body:not(.art) { display: grid; grid-template-columns: 1fr 240px; grid-template-rows: auto 1fr; column-gap: 14px; row-gap: 8px;
@@ -116,8 +125,11 @@
   </div>
   <div id="art-view">
     <h2>Bilderrahmen</h2>
-    <p>Bilder für den Bilderrahmen am TV. Sie werden auf 16:9 zugeschnitten und füllen den ganzen Bildschirm. Der TV speichert sie und zeigt sie gedimmt im Wechsel, alle 5 Minuten ein anderes. Starten am TV: unten im Free-My-TV-Menü auf „Bilderrahmen“.</p>
-    <button class="txt send" id="artadd">Bilder hinzufügen</button>
+    <p>Bilder für den Bilderrahmen am TV. Sie füllen den ganzen Bildschirm. Der TV speichert sie und zeigt sie gedimmt im Wechsel, alle 5 Minuten ein anderes. Starten am TV: unten im Free-My-TV-Menü auf „Bilderrahmen“.</p>
+    <button class="txt" id="artadd">Bilder auswählen</button>
+    <div id="pending"></div>
+    <button class="txt send" id="artsend">An den TV senden</button>
+    <h3 id="ontv-title">Auf dem TV</h3>
     <div id="thumbs"></div>
     <button class="txt" id="artclear">Alle Bilder vom TV löschen</button>
   </div>
@@ -493,55 +505,177 @@
 
   // MARK: - Picture frame: pictures the TV keeps and shows one after the other.
 
+  // Each chosen picture gets a 16:9 window, the TV's shape: drag to pick the part, two fingers to zoom in.
+  // The crop is kept as its center in the picture (cx, cy) and a zoom over "just covers the window" (z ≥ 1).
+  var crops = [], SENT = 'tvnotiz.sent';
+
+  function cropLayout(c, cw, ch) {
+    var s = Math.max(cw / c.img.naturalWidth, ch / c.img.naturalHeight) * c.z;
+    var hw = cw / s / 2, hh = ch / s / 2;
+    c.cx = Math.max(hw, Math.min(c.img.naturalWidth - hw, c.cx));
+    c.cy = Math.max(hh, Math.min(c.img.naturalHeight - hh, c.cy));
+    return s;
+  }
+
+  function cropDraw(c) {
+    var cv = c.canvas, dpr = window.devicePixelRatio || 1, w = cv.clientWidth * dpr;
+    if (!w) return;
+    cv.width = Math.round(w);
+    cv.height = Math.round(w * 9 / 16);
+    var s = cropLayout(c, cv.width, cv.height), g = cv.getContext('2d');
+    g.drawImage(c.img, cv.width / 2 - c.cx * s, cv.height / 2 - c.cy * s, c.img.naturalWidth * s, c.img.naturalHeight * s);
+  }
+
+  function cropBlob(c, done) {
+    var cv = document.createElement('canvas');
+    cv.width = 1920;
+    cv.height = 1080;
+    var s = cropLayout(c, 1920, 1080);
+    cv.getContext('2d').drawImage(c.img, 960 - c.cx * s, 540 - c.cy * s, c.img.naturalWidth * s, c.img.naturalHeight * s);
+    cv.toBlob(done, 'image/jpeg', 0.86);
+  }
+
+  function cropGestures(c) {
+    var cv = c.canvas, fingers = {}, start = null;
+    function begin() {
+      var ids = Object.keys(fingers);
+      start = {cx: c.cx, cy: c.cy, z: c.z, p: fingers[ids[0]].slice(), d: 0};
+      if (ids.length >= 2) {
+        var a = fingers[ids[0]], b = fingers[ids[1]];
+        start.d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        start.p = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      }
+    }
+    cv.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+      fingers[e.pointerId] = [e.clientX, e.clientY];
+      begin();
+    });
+    cv.addEventListener('pointermove', function (e) {
+      if (!(e.pointerId in fingers) || !start) return;
+      fingers[e.pointerId] = [e.clientX, e.clientY];
+      var ids = Object.keys(fingers), p = fingers[ids[0]];
+      if (ids.length >= 2 && start.d) {
+        var b = fingers[ids[1]];
+        c.z = Math.max(1, Math.min(6, start.z * Math.hypot(b[0] - p[0], b[1] - p[1]) / start.d));
+        p = [(p[0] + b[0]) / 2, (p[1] + b[1]) / 2];
+      }
+      var dpr = window.devicePixelRatio || 1;
+      var s = Math.max(cv.width / c.img.naturalWidth, cv.height / c.img.naturalHeight) * c.z / dpr;
+      c.cx = start.cx - (p[0] - start.p[0]) / s;
+      c.cy = start.cy - (p[1] - start.p[1]) / s;
+      cropDraw(c);
+    });
+    function up(e) { delete fingers[e.pointerId]; if (Object.keys(fingers).length) begin(); else start = null; }
+    cv.addEventListener('pointerup', up);
+    cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', function (e) {   // a mouse: the wheel zooms
+      e.preventDefault();
+      c.z = Math.max(1, Math.min(6, c.z * (e.deltaY < 0 ? 1.1 : 0.9)));
+      cropDraw(c);
+    }, {passive: false});
+  }
+
+  function pendingChanged() {
+    document.body.classList.toggle('has-pending', crops.length > 0);
+    $('artsend').textContent = crops.length === 1 ? 'An den TV senden' : crops.length + ' Bilder an den TV senden';
+  }
+
   $('artadd').onclick = function () { $('artfile').value = ''; $('artfile').click(); };
   $('artfile').onchange = function () {
-    var files = [].slice.call(this.files || []), done = 0, failed = 0;
-    if (!files.length || busy) return;
+    [].forEach.call(this.files || [], function (f) {
+      var img = new Image();
+      img.onload = function () {
+        var box = document.createElement('div'), cv = document.createElement('canvas'), x = document.createElement('button');
+        var tip = document.createElement('div');
+        box.className = 'crop';
+        x.className = 'x';
+        x.textContent = '×';
+        x.setAttribute('aria-label', 'Bild entfernen');
+        tip.className = 'tip';
+        tip.textContent = 'Ziehen wählt den Ausschnitt, zwei Finger zoomen.';
+        box.appendChild(cv);
+        box.appendChild(x);
+        box.appendChild(tip);
+        $('pending').appendChild(box);
+        var c = {img: img, canvas: cv, box: box, z: 1, cx: img.naturalWidth / 2, cy: img.naturalHeight / 2};
+        crops.push(c);
+        x.onclick = function () { crops.splice(crops.indexOf(c), 1); box.remove(); pendingChanged(); };
+        cropGestures(c);
+        cropDraw(c);
+        pendingChanged();
+      };
+      img.onerror = function () { status('Ein Bild ging leider nicht.', 'warn'); };
+      img.src = URL.createObjectURL(f);
+    });
+  };
+
+  /** What's on the TV, as small pictures kept on this phone (the TV can't be asked). */
+  function sentList() { try { return JSON.parse(localStorage.getItem(SENT)) || []; } catch (e) { return []; } }
+  function showSent() {
+    var list = sentList();
+    $('thumbs').innerHTML = '';
+    list.forEach(function (src) { var t = document.createElement('img'); t.src = src; $('thumbs').appendChild(t); });
+    $('ontv-title').textContent = list.length ? 'Auf dem TV (' + list.length + ')' : 'Auf dem TV';
+  }
+  function rememberSent(blob) {
+    var t = document.createElement('canvas'), img = new Image();
+    img.onload = function () {
+      t.width = 320;
+      t.height = 180;
+      t.getContext('2d').drawImage(img, 0, 0, 320, 180);
+      var list = sentList();
+      list.push(t.toDataURL('image/jpeg', 0.7));
+      try { localStorage.setItem(SENT, JSON.stringify(list.slice(-40))); } catch (e) {}
+      showSent();
+    };
+    img.src = URL.createObjectURL(blob);
+  }
+
+  $('artsend').onclick = function () {
+    if (busy || !crops.length) return;
     busy = true;
-    $('artadd').disabled = true;
+    $('artsend').disabled = $('artadd').disabled = true;
+    var done = 0;
     function next() {
-      if (!files.length) {
+      if (!crops.length) {
         busy = false;
-        $('artadd').disabled = false;
-        status(failed ? done + ' gesendet, ' + failed + ' gingen nicht.' : done + (done === 1 ? ' Bild' : ' Bilder') + ' an den TV gesendet.', failed ? 'warn' : 'ok');
+        $('artsend').disabled = $('artadd').disabled = false;
+        pendingChanged();
+        status(done + (done === 1 ? ' Bild' : ' Bilder') + ' an den TV gesendet.', 'ok');
         return;
       }
-      var f = files.shift();
-      status('Bild ' + (done + failed + 1) + ' wird hochgeladen …');
-      // The TV fills the whole screen with it: cut to 16:9 here (the middle of it), 1920 × 1080.
-      new Promise(function (ok, fail) {
-        var url = URL.createObjectURL(f), src = new Image();
-        src.onload = function () {
-          var c = document.createElement('canvas'), w = src.naturalWidth, h = src.naturalHeight;
-          var k = Math.max(1920 / w, 1080 / h);
-          c.width = 1920;
-          c.height = 1080;
-          c.getContext('2d').drawImage(src, (1920 - w * k) / 2, (1080 - h * k) / 2, w * k, h * k);
-          URL.revokeObjectURL(url);
-          c.toBlob(ok, 'image/jpeg', 0.86);
-        };
-        src.onerror = fail;
-        src.src = url;
-      }).then(function (blob) {
+      var c = crops[0];
+      status('Bild ' + (done + 1) + ' wird hochgeladen …');
+      new Promise(function (ok) { cropBlob(c, ok); }).then(function (blob) {
         return upload(blob).then(function (url) {
           var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-          return put(JSON.stringify({v: 1, art: 'add', id: id, u: url})).then(function () {
-            var t = document.createElement('img');
-            t.src = URL.createObjectURL(blob);
-            $('thumbs').appendChild(t);
-          });
+          return put(JSON.stringify({v: 1, art: 'add', id: id, u: url})).then(function () { rememberSent(blob); });
         });
-      }).then(function () { done++; next(); }, function () { failed++; next(); });
+      }).then(function () {
+        done++;
+        crops.shift();
+        c.box.remove();
+        next();
+      }, function () {   // stop here: the rest stays in the list, to send again
+        busy = false;
+        $('artsend').disabled = $('artadd').disabled = false;
+        pendingChanged();
+        status((done ? done + ' gesendet, dann' : 'Das') + ' ging nicht raus. Internet da? Nochmal senden.', 'warn');
+      });
     }
     next();
   };
   $('artclear').onclick = function () {
     if (busy || !confirm('Alle Bilder vom TV löschen?')) return;
     put(JSON.stringify({v: 1, art: 'clear', id: Date.now().toString(36)})).then(function () {
-      $('thumbs').innerHTML = '';
+      try { localStorage.removeItem(SENT); } catch (e) {}
+      showSent();
       status('Bilder werden vom TV gelöscht.', 'ok');
     }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
   };
+  showSent();
 
   function tab(art) {
     document.body.classList.toggle('art', art);
