@@ -56,11 +56,19 @@
   #art-view button.txt { width: 100%; height: 52px; }
   #thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
   #thumbs img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; display: block; }
+  .thumb { position: relative; }
+  .thumb img { cursor: pointer; }
+  .thumb.picked img { outline: 3px solid var(--sel); outline-offset: 2px; }
+  .thumb .x, .crop .x { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 18px; line-height: 30px; padding: 0; cursor: pointer; }
   #art-view h3 { font-size: 17px; margin: 8px 0 0; }
+  .setting { display: flex; flex-direction: column; gap: 6px; }
+  .setting span { font-size: 14px; font-weight: 600; }
+  .seg { display: flex; background: var(--line); padding: 3px; border-radius: 12px; gap: 3px; }
+  .seg button { flex: 1; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 550; padding: 8px 4px; border-radius: 9px; cursor: pointer; }
+  .seg button.on { background: var(--field); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
   #pending { display: flex; flex-direction: column; gap: 14px; }
   .crop { position: relative; }
   .crop canvas { width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: 12px; background: #000; cursor: grab; }
-  .crop .x { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 20px; line-height: 34px; cursor: pointer; }
   .crop .tip { font-size: 13px; color: var(--muted); margin-top: 4px; }
   #artsend { display: none; }
   .has-pending #artsend { display: block; }
@@ -125,11 +133,14 @@
   </div>
   <div id="art-view">
     <h2>Bilderrahmen</h2>
-    <p>Bilder für den Bilderrahmen am TV. Sie füllen den ganzen Bildschirm. Der TV speichert sie und zeigt sie gedimmt im Wechsel, alle 5 Minuten ein anderes. Starten am TV: unten im Free-My-TV-Menü auf „Bilderrahmen“.</p>
+    <p>Bilder für den Bilderrahmen am TV. Sie füllen den ganzen Bildschirm, gedimmt und im Wechsel. Starten am TV: unten im Free-My-TV-Menü auf „Bilderrahmen“.</p>
+    <div class="setting"><span>Bildwechsel nach</span><div class="seg" id="every"></div></div>
+    <div class="setting"><span>Reihenfolge</span><div class="seg" id="order"></div></div>
     <button class="txt" id="artadd">Bilder auswählen</button>
     <div id="pending"></div>
     <button class="txt send" id="artsend">An den TV senden</button>
     <h3 id="ontv-title">Auf dem TV</h3>
+    <div class="hint" style="text-align:left">Antippen zeigt das Bild als Nächstes, × löscht es vom TV.</div>
     <div id="thumbs"></div>
     <button class="txt" id="artclear">Alle Bilder vom TV löschen</button>
   </div>
@@ -270,7 +281,7 @@
 
   /** Where a gesture starts from: the object's state and the fingers', so moves are measured from there. */
   function beginGesture() {
-    if (!selected) { gesture = null; return; }
+    if (!selected || !Object.keys(touches).length) { gesture = null; return; }
     var p = pair(), o = selected;
     gesture = {x: o.x, y: o.y, r: o.r, w: o.w, h: o.h, s: o.s};
     if (p) {
@@ -616,17 +627,48 @@
   function showSent() {
     var list = sentList();
     $('thumbs').innerHTML = '';
-    list.forEach(function (src) { var t = document.createElement('img'); t.src = src; $('thumbs').appendChild(t); });
+    list.forEach(function (it) {
+      var src = typeof it === 'string' ? it : it.src, id = typeof it === 'string' ? '' : it.id;   // the first ones had no id
+      var box = document.createElement('div'), t = document.createElement('img');
+      box.className = 'thumb';
+      t.src = src;
+      box.appendChild(t);
+      if (id) t.onclick = function () { showNow(id, box); };
+      if (id) {
+        var x = document.createElement('button');
+        x.className = 'x';
+        x.textContent = '×';
+        x.setAttribute('aria-label', 'Vom TV löschen');
+        x.onclick = function () { removeSent(id); };
+        box.appendChild(x);
+      }
+      $('thumbs').appendChild(box);
+    });
     $('ontv-title').textContent = list.length ? 'Auf dem TV (' + list.length + ')' : 'Auf dem TV';
   }
-  function rememberSent(blob) {
+  /** That picture on the TV now if the frame runs, else first when it starts. */
+  function showNow(id, box) {
+    put(JSON.stringify({v: 1, art: 'show', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: id})).then(function () {
+      [].forEach.call($('thumbs').children, function (b) { b.classList.toggle('picked', b === box); });
+      status('Kommt am TV als Nächstes.', 'ok');
+    }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
+  }
+  function removeSent(id) {
+    put(JSON.stringify({v: 1, art: 'remove', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: id})).then(function () {
+      var list = sentList().filter(function (it) { return typeof it === 'string' || it.id !== id; });
+      try { localStorage.setItem(SENT, JSON.stringify(list)); } catch (e) {}
+      showSent();
+      status('Bild vom TV gelöscht.', 'ok');
+    }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
+  }
+  function rememberSent(blob, id) {
     var t = document.createElement('canvas'), img = new Image();
     img.onload = function () {
       t.width = 320;
       t.height = 180;
       t.getContext('2d').drawImage(img, 0, 0, 320, 180);
       var list = sentList();
-      list.push(t.toDataURL('image/jpeg', 0.7));
+      list.push({id: id, src: t.toDataURL('image/jpeg', 0.7)});
       try { localStorage.setItem(SENT, JSON.stringify(list.slice(-40))); } catch (e) {}
       showSent();
     };
@@ -651,7 +693,7 @@
       new Promise(function (ok) { cropBlob(c, ok); }).then(function (blob) {
         return upload(blob).then(function (url) {
           var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-          return put(JSON.stringify({v: 1, art: 'add', id: id, u: url})).then(function () { rememberSent(blob); });
+          return put(JSON.stringify({v: 1, art: 'add', id: id, u: url})).then(function () { rememberSent(blob, id); });
         });
       }).then(function () {
         done++;
@@ -676,6 +718,35 @@
     }, function () { status('Hat nicht geklappt. Internet da?', 'warn'); });
   };
   showSent();
+  // How the TV shows them: sent at once, kept here to show what was picked last (the TV can't be asked).
+  var FRAME = 'tvnotiz.frame', frame = {every: 300, order: 'random'};
+  try { var kept = JSON.parse(localStorage.getItem(FRAME)); if (kept) frame = kept; } catch (e) {}
+  function segment(box, choices, key) {
+    choices.forEach(function (ch) {
+      var b = document.createElement('button');
+      b.textContent = ch[1];
+      b.onclick = function () {
+        var before = frame[key];
+        frame[key] = ch[0];
+        paint();
+        put(JSON.stringify({v: 1, art: 'settings', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          every: frame.every, order: frame.order})).then(function () {
+          try { localStorage.setItem(FRAME, JSON.stringify(frame)); } catch (e) {}
+          status('Am TV eingestellt.', 'ok');
+        }, function () {
+          frame[key] = before;
+          paint();
+          status('Hat nicht geklappt. Internet da?', 'warn');
+        });
+      };
+      box.appendChild(b);
+    });
+    function paint() { [].forEach.call(box.children, function (b, i) { b.classList.toggle('on', choices[i][0] === frame[key]); }); }
+    box.paint = paint;
+    paint();
+  }
+  segment($('every'), [[10, '10 s'], [30, '30 s'], [60, '1 Min'], [300, '5 Min'], [600, '10 Min']], 'every');
+  segment($('order'), [['random', 'Zufällig'], ['sequence', 'Der Reihe nach']], 'order');
 
   function tab(art) {
     document.body.classList.toggle('art', art);
