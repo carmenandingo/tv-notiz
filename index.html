@@ -45,6 +45,8 @@
   #textbar textarea { flex: 1; min-width: 0; resize: none; border-radius: 12px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font: inherit; font-size: 17px; padding: 10px 12px; }
   .hint { font-size: 13px; color: var(--muted); text-align: center; }
   input[type=file] { display: none; }
+  #pull { position: fixed; left: 50%; top: 0; z-index: 20; transform: translate(-50%, -60px); padding: 8px 14px; border-radius: 999px;
+    background: var(--ink); color: var(--bg); font-size: 14px; font-weight: 600; pointer-events: none; opacity: 0; }
   #setup { display: none; max-width: 520px; margin: 40px auto; }
   .nosetup #setup { display: block; } .nosetup #app { display: none; }
   #app, #note-view { display: contents; }
@@ -101,6 +103,7 @@
 </style>
 </head>
 <body>
+<div id="pull">Zum Neuladen ziehen</div>
 <div id="setup">
   <h2>TV-Notiz</h2>
   <p>Diese Seite braucht den Link mit eurem Kanal (er endet auf <code>#…</code>). Öffne den Link, den du bekommen hast, und leg ihn auf den Home-Bildschirm.</p>
@@ -821,6 +824,35 @@
     };
     sizeBox.appendChild(b);
   });
+
+  // Pull down to reload. On the home screen the page runs without the browser around it, so it has no reload button
+  // of its own. Not on the drawing page or the crop editor, where a finger drags; only from the top of what scrolls.
+  (function () {
+    var startY = null, dy = 0, pill = $('pull'), FAR = 90;
+    function scroller() { return document.body.classList.contains('art') ? $('art-view') : document.scrollingElement; }
+    document.addEventListener('touchstart', function (e) {
+      var t = e.target;
+      startY = null;
+      if (e.touches.length !== 1 || document.body.classList.contains('editing') || (t.closest && t.closest('canvas, textarea'))) return;
+      if (scroller().scrollTop > 0) return;
+      startY = e.touches[0].clientY;
+      dy = 0;
+    }, {passive: true});
+    document.addEventListener('touchmove', function (e) {
+      if (startY === null) return;
+      dy = Math.max(0, e.touches[0].clientY - startY);
+      var k = Math.min(1, dy / FAR);
+      pill.style.opacity = k;
+      pill.style.transform = 'translate(-50%, ' + (-60 + 80 * k) + 'px)';
+      pill.textContent = dy >= FAR ? 'Loslassen zum Neuladen' : 'Zum Neuladen ziehen';
+    }, {passive: true});
+    document.addEventListener('touchend', function () {
+      if (startY !== null && dy >= FAR) { pill.textContent = 'Wird neu geladen …'; location.reload(); return; }
+      startY = null;
+      pill.style.opacity = 0;
+      pill.style.transform = 'translate(-50%, -60px)';
+    });
+  })();
 
   window.addEventListener('resize', fit);
   fit();
