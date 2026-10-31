@@ -78,6 +78,10 @@
   #thumbs img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; display: block; }
   .thumb { position: relative; }
   .thumb img { cursor: pointer; }
+  .thumb .badge { position: absolute; left: 6px; bottom: 6px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 6px; pointer-events: none; }
+  #vidlinkbox { display: none; gap: 8px; margin: 8px 0; }
+  #vidlinkbox.on { display: flex; }
+  #vidlink { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--field); color: var(--ink); }
   .thumb.picked img { outline: 3px solid var(--sel); outline-offset: 2px; }
   .thumb .x, .crop .x { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 18px; line-height: 30px; padding: 0; cursor: pointer; }
   #art-view h3 { font-size: 17px; margin: 8px 0 0; }
@@ -171,7 +175,12 @@
     </div>
     <div class="setting"><span>Bildwechsel nach</span><div class="seg" id="every"></div></div>
     <div class="setting"><span>Reihenfolge</span><div class="seg" id="order"></div></div>
+    <div class="setting"><span>Schwarz nach</span><div class="seg" id="minutes"></div></div>
+    <div class="setting"><span>Ton bei Videos</span><div class="seg" id="sound"></div></div>
     <button class="txt" id="artadd">Bilder zu diesem Set hinzufügen</button>
+    <button class="txt" id="vidadd">Video hinzufügen</button>
+    <div id="vidlinkbox"><input id="vidlink" type="url" placeholder="Link zum Video, z. B. aus Dropbox" enterkeyhint="send"><button class="txt send" id="vidsend">Senden</button></div>
+    <div class="hint" style="text-align:left">Videos laufen am TV im Vollbild in Schleife. Bis 2 MB gehen sie direkt, größere über einen Link (Dropbox: Teilen, Link kopieren).</div>
     <div id="pending"></div>
     <button class="txt send" id="artsend">An den TV senden</button>
     <h3 id="ontv-title">In diesem Set</h3>
@@ -195,6 +204,7 @@
   </div>
   <input type="file" id="file" accept="image/*">
   <input type="file" id="artfile" accept="image/*" multiple>
+  <input type="file" id="vidfile" accept="video/*">
 </div>
 <script>
 (function () {
@@ -743,6 +753,7 @@
       t.src = p.t;
       t.onclick = function () { openMenu(p); };
       box.appendChild(t);
+      if (p.k === 'v') { var b = document.createElement('span'); b.className = 'badge'; b.textContent = 'Video'; box.appendChild(b); }
       $('thumbs').appendChild(box);
     });
     $('ontv-title').textContent = 'In diesem Set (' + list.length + ')' + (asking && !answered ? ', frage den TV …' : '');
@@ -825,6 +836,7 @@
     $('picmenu-img').src = p.t;
     $('pm-crop').disabled = true;
     $('pm-crop').textContent = 'Ausschnitt ändern';
+    $('pm-crop').style.display = p.k === 'v' ? 'none' : '';
     origGet(p.id, function (rec) {
       if (menuPic !== p) return;
       $('pm-crop').disabled = !rec;
@@ -932,8 +944,8 @@
   };
 
   // How the TV shows them: sent at once, kept here to show what was picked last.
-  var FRAME = 'tvnotiz.frame', frame = {every: 300, order: 'random'};
-  try { var kept = JSON.parse(localStorage.getItem(FRAME)); if (kept) frame = kept; } catch (e) {}
+  var FRAME = 'tvnotiz.frame', frame = {every: 300, order: 'random', minutes: 60, sound: true};
+  try { var kept = JSON.parse(localStorage.getItem(FRAME)); if (kept) for (var k in kept) frame[k] = kept[k]; } catch (e) {}
   function segment(box, choices, key) {
     choices.forEach(function (ch) {
       var b = document.createElement('button');
@@ -942,7 +954,7 @@
         var before = frame[key];
         frame[key] = ch[0];
         paint();
-        put(JSON.stringify({v: 1, art: 'settings', id: rid(), every: frame.every, order: frame.order})).then(function () {
+        put(JSON.stringify({v: 1, art: 'settings', id: rid(), every: frame.every, order: frame.order, minutes: frame.minutes, sound: frame.sound})).then(function () {
           try { localStorage.setItem(FRAME, JSON.stringify(frame)); } catch (e) {}
           status('Am TV eingestellt.', 'ok');
         }, function (e) {
@@ -958,6 +970,77 @@
   }
   segment($('every'), [[10, '10 s'], [30, '30 s'], [60, '1 Min'], [300, '5 Min'], [600, '10 Min']], 'every');
   segment($('order'), [['random', 'Zufällig'], ['sequence', 'Der Reihe nach']], 'order');
+  segment($('minutes'), [[30, '30 Min'], [60, '1 Std'], [120, '2 Std'], [240, '4 Std']], 'minutes');
+  segment($('sound'), [[true, 'An'], [false, 'Aus']], 'sound');
+
+  // MARK: - Videos: a small one straight through ntfy (2 MB at most), a bigger one as a link the TV fetches itself.
+
+  /** A dark card with the word Video, when the phone can't make a picture of the video. */
+  function videoCard() {
+    var c = document.createElement('canvas'), g;
+    c.width = 320;
+    c.height = 180;
+    g = c.getContext('2d');
+    g.fillStyle = '#1b2026';
+    g.fillRect(0, 0, 320, 180);
+    g.fillStyle = '#9fb0c0';
+    g.font = '28px sans-serif';
+    g.fillText('Video', 125, 100);
+    return c.toDataURL('image/jpeg', 0.7);
+  }
+  function videoThumb(file, done) {
+    var v = document.createElement('video'), over = false;
+    function end(t) { if (!over) { over = true; done(t || videoCard()); } }
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.onloadeddata = function () { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
+    v.onseeked = function () {
+      try {
+        var c = document.createElement('canvas');
+        c.width = 320;
+        c.height = 180;
+        c.getContext('2d').drawImage(v, 0, 0, 320, 180);
+        end(c.toDataURL('image/jpeg', 0.7));
+      } catch (e) { end(''); }
+    };
+    v.onerror = function () { end(''); };
+    setTimeout(function () { end(''); }, 8000);
+    v.src = URL.createObjectURL(file);
+  }
+  function sendVideo(u, t) {
+    var id = 'v' + rid(), set = sel;
+    return put(JSON.stringify({v: 1, art: 'add', id: rid(), k: 'v', p: id, s: set, u: u})).then(function () {
+      tv.pics.push({id: id, at: Date.now() / 1000, s: set, k: 'v', t: t || videoCard()});
+      saveTv();
+      renderPics();
+      status('Video ist unterwegs. Der TV lädt es, sobald Free My TV offen ist.', 'ok');
+    });
+  }
+  $('vidadd').onclick = function () { $('vidfile').value = ''; $('vidfile').click(); };
+  $('vidfile').onchange = function () {
+    var f = this.files && this.files[0];
+    if (!f) return;
+    if (f.size > 2000000) {
+      $('vidlinkbox').classList.add('on');
+      status('Das Video hat ' + Math.round(f.size / 100000) / 10 + ' MB, direkt gehen nur 2 MB. Leg es in Dropbox, kopier den Link und füg ihn hier ein.', 'warn');
+      return;
+    }
+    status('Video wird hochgeladen …');
+    videoThumb(f, function (t) {
+      put(f, {'Filename': 'video.mp4'}).then(function (m) {
+        if (!m.attachment) throw new Error('kein Anhang');
+        return sendVideo(m.attachment.url, t);
+      }).then(null, function (e) { status(why(e), 'warn'); });
+    });
+  };
+  function sendLink() {
+    var u = $('vidlink').value.trim();
+    if (!/^https:\/\//.test(u)) { status('Bitte einen Link einfügen, der mit https:// anfängt.', 'warn'); return; }
+    sendVideo(u).then(function () { $('vidlink').value = ''; $('vidlinkbox').classList.remove('on'); }, function (e) { status(why(e), 'warn'); });
+  }
+  $('vidsend').onclick = sendLink;
+  $('vidlink').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendLink(); } });
 
   function tab(art) {
     document.body.classList.toggle('art', art);
