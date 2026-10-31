@@ -56,7 +56,25 @@
   #art-view p { margin: 0; color: var(--muted); }
   #art-view > * { flex-shrink: 0; }
   #art-view button.txt { width: 100%; height: 52px; }
-  #thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+  #thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips button { border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+  .chips button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .chips button .live { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2E9E5B; margin-left: 8px; vertical-align: 1px; }
+  #newset { display: none; gap: 8px; }
+  #newset.on { display: flex; }
+  #newset input { flex: 1; min-width: 0; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font: inherit; padding: 0 12px; }
+  #newset button { width: auto !important; height: 44px !important; }
+  .setbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #art-view .setbar button.txt { width: auto; height: 40px; }
+  #art-view .setbar button.small { font-size: 14px; padding: 0 12px; }
+  #activeinfo { font-size: 14px; font-weight: 600; color: var(--ok); margin-right: auto; }
+  #activate { margin-right: auto; }
+  #picmenu { display: none; position: fixed; inset: 0; z-index: 15; background: rgba(0,0,0,0.45); align-items: flex-end; justify-content: center; }
+  #picmenu.on { display: flex; }
+  #picmenu .sheet { width: 100%; max-width: 520px; background: var(--bg); border-radius: 18px 18px 0 0; padding: 16px 16px max(16px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+  #picmenu img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 12px; }
+  #picmenu button.txt { width: 100%; height: 50px; }
   #thumbs img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 10px; display: block; }
   .thumb { position: relative; }
   .thumb img { cursor: pointer; }
@@ -142,16 +160,33 @@
   </div>
   <div id="art-view">
     <h2>Bilderrahmen</h2>
-    <p>Bilder für den Bilderrahmen am TV. Sie füllen den ganzen Bildschirm, gedimmt und im Wechsel. Starten am TV: unten im Free-My-TV-Menü auf „Bilderrahmen“.</p>
+    <p>Deine Bilder füllen am TV den ganzen Bildschirm, gedimmt und im Wechsel. Jedes Set hat eigene Bilder, das aktive läuft am TV. Starten am TV: unten im Free-My-TV-Menü auf „Bilderrahmen“.</p>
+    <div class="chips" id="sets"></div>
+    <div id="newset"><input id="newname" maxlength="40" placeholder="Name, zum Beispiel Halloween" enterkeyhint="done"><button class="txt" id="newok">Anlegen</button></div>
+    <div class="setbar">
+      <button class="txt send" id="activate">Am TV zeigen</button>
+      <span id="activeinfo">Läuft gerade am TV</span>
+      <button class="txt small" id="renameset">Umbenennen</button>
+      <button class="txt small" id="delset">Set löschen</button>
+    </div>
     <div class="setting"><span>Bildwechsel nach</span><div class="seg" id="every"></div></div>
     <div class="setting"><span>Reihenfolge</span><div class="seg" id="order"></div></div>
-    <button class="txt" id="artadd">Bilder auswählen</button>
+    <button class="txt" id="artadd">Bilder zu diesem Set hinzufügen</button>
     <div id="pending"></div>
     <button class="txt send" id="artsend">An den TV senden</button>
-    <h3 id="ontv-title">Auf dem TV</h3>
-    <div class="hint" style="text-align:left">Antippen zeigt das Bild als Nächstes, × löscht es vom TV.</div>
+    <h3 id="ontv-title">In diesem Set</h3>
+    <div class="hint" style="text-align:left">Bild antippen: als Nächstes zeigen, Ausschnitt ändern oder löschen.</div>
     <div id="thumbs"></div>
-    <button class="txt" id="artclear">Alle Bilder vom TV löschen</button>
+    <button class="txt" id="artclear">Alle Bilder dieses Sets löschen</button>
+  </div>
+  <div id="picmenu">
+    <div class="sheet">
+      <img id="picmenu-img" alt="">
+      <button class="txt" id="pm-show">Als Nächstes zeigen</button>
+      <button class="txt" id="pm-crop">Ausschnitt ändern</button>
+      <button class="txt" id="pm-del">Vom TV löschen</button>
+      <button class="txt" id="pm-cancel">Abbrechen</button>
+    </div>
   </div>
   <div id="editor">
     <canvas id="editcanvas"></canvas>
@@ -539,7 +574,7 @@
   // Each chosen picture shows in the list as its 16:9 part (the TV's shape); tapping it opens the editor, a screen of
   // its own, where dragging picks the part and two fingers zoom in. The list itself scrolls like any page.
   // The crop is kept as its center in the picture (cx, cy) and a zoom over "just covers the window" (z ≥ 1).
-  var crops = [], SENT = 'tvnotiz.sent';
+  var crops = [];
 
   function cropLayout(c, cw, ch) {
     var s = Math.max(cw / c.img.naturalWidth, ch / c.img.naturalHeight) * c.z;
@@ -620,9 +655,11 @@
     document.body.classList.add('editing');
     cropDraw(c, $('editcanvas'));
   }
+  var lastEdited = null;
   $('editdone').onclick = function () {
     document.body.classList.remove('editing');
-    if (editing) cropDraw(editing);
+    if (editing && editing.canvas) cropDraw(editing);
+    lastEdited = editing;
     editing = null;
   };
   window.addEventListener('resize', function () { if (editing) cropDraw(editing, $('editcanvas')); });
@@ -649,7 +686,7 @@
         box.appendChild(x);
         box.appendChild(tip);
         $('pending').appendChild(box);
-        var c = {img: img, canvas: cv, box: box, z: 1, cx: img.naturalWidth / 2, cy: img.naturalHeight / 2};
+        var c = {img: img, file: f, canvas: cv, box: box, z: 1, cx: img.naturalWidth / 2, cy: img.naturalHeight / 2};
         crops.push(c);
         x.onclick = function () { crops.splice(crops.indexOf(c), 1); box.remove(); pendingChanged(); };
         cv.onclick = function () { openEditor(c); };
@@ -661,64 +698,214 @@
     });
   };
 
-  /** What's on the TV, as small pictures kept on this phone (the TV can't be asked). */
-  function sentList() { try { return JSON.parse(localStorage.getItem(SENT)) || []; } catch (e) { return []; } }
-  function showSent() {
-    var list = sentList();
+  function rid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+  // MARK: - What the TV has: sets and pictures
+
+  // The TV is where it all is; this is the last answer it gave, shown at once and replaced when it answers again.
+  var TV = 'tvnotiz.tv', SEL = 'tvnotiz.sel';
+  var tv = {sets: [{id: 'main', name: 'Kunst'}], active: 'main', pics: []}, sel;
+  try { tv = JSON.parse(localStorage.getItem(TV)) || tv; } catch (e) {}
+  try { sel = localStorage.getItem(SEL); } catch (e) {}
+  function saveTv() { try { localStorage.setItem(TV, JSON.stringify(tv)); localStorage.setItem(SEL, sel); } catch (e) {} }
+  function setById(id) { return tv.sets.filter(function (x) { return x.id === id; })[0]; }
+  if (!setById(sel)) sel = tv.active;
+
+  function renderSets() {
+    if (!setById(sel)) sel = tv.active || (tv.sets[0] && tv.sets[0].id);
+    var box = $('sets');
+    box.innerHTML = '';
+    tv.sets.forEach(function (x) {
+      var b = document.createElement('button');
+      b.textContent = x.name;
+      if (x.id === tv.active) { var dot = document.createElement('span'); dot.className = 'live'; b.appendChild(dot); }
+      b.className = x.id === sel ? 'on' : '';
+      b.onclick = function () { sel = x.id; saveTv(); renderAll(); };
+      box.appendChild(b);
+    });
+    var plus = document.createElement('button');
+    plus.textContent = '+ Neues Set';
+    plus.onclick = function () { $('newset').classList.add('on'); $('newname').focus(); };
+    box.appendChild(plus);
+    var live = sel === tv.active;
+    $('activate').style.display = live ? 'none' : '';
+    $('activeinfo').style.display = live ? '' : 'none';
+    $('delset').style.display = tv.sets.length > 1 ? '' : 'none';
+    $('artadd').textContent = 'Bilder zu „' + (setById(sel) || {name: ''}).name + '“ hinzufügen';
+  }
+
+  function renderPics() {
+    var list = tv.pics.filter(function (p) { return p.s === sel; }).sort(function (a, b) { return a.at - b.at; });
     $('thumbs').innerHTML = '';
-    list.forEach(function (it) {
-      var src = typeof it === 'string' ? it : it.src, id = typeof it === 'string' ? '' : it.id;   // the first ones had no id
+    list.forEach(function (p) {
       var box = document.createElement('div'), t = document.createElement('img');
       box.className = 'thumb';
-      t.src = src;
+      t.src = p.t;
+      t.onclick = function () { openMenu(p); };
       box.appendChild(t);
-      if (id) t.onclick = function () { showNow(id, box); };
-      if (id) {
-        var x = document.createElement('button');
-        x.className = 'x';
-        x.textContent = '×';
-        x.setAttribute('aria-label', 'Vom TV löschen');
-        x.onclick = function () { removeSent(id); };
-        box.appendChild(x);
-      }
       $('thumbs').appendChild(box);
     });
-    $('ontv-title').textContent = list.length ? 'Auf dem TV (' + list.length + ')' : 'Auf dem TV (keine Bilder)';
+    $('ontv-title').textContent = 'In diesem Set (' + list.length + ')' + (asking && !answered ? ', frage den TV …' : '');
+    $('artclear').style.display = list.length ? '' : 'none';
   }
-  /** That picture on the TV now if the frame runs, else first when it starts. */
-  function showNow(id, box) {
-    put(JSON.stringify({v: 1, art: 'show', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: id})).then(function () {
-      [].forEach.call($('thumbs').children, function (b) { b.classList.toggle('picked', b === box); });
-      status('Kommt am TV als Nächstes.', 'ok');
-    }, function (e) { status(why(e), 'warn'); });
+
+  function renderAll() { renderSets(); renderPics(); }
+
+  /** A change on the TV: sent, and shown here at once (the TV's next answer confirms it). */
+  function tell(msg, ok) {
+    msg.v = 1;
+    msg.id = rid();
+    return put(JSON.stringify(msg)).then(function () { if (ok) ok(); saveTv(); renderAll(); }, function (e) { status(why(e), 'warn'); });
   }
-  function removeSent(id) {
-    put(JSON.stringify({v: 1, art: 'remove', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: id})).then(function () {
-      var list = sentList().filter(function (it) { return typeof it === 'string' || it.id !== id; });
-      try { localStorage.setItem(SENT, JSON.stringify(list)); } catch (e) {}
-      showSent();
+
+  function newSet() {
+    var name = $('newname').value.trim();
+    if (!name) return;
+    var id = 's' + rid();
+    tell({art: 'newset', s: id, name: name}, function () {
+      tv.sets.push({id: id, name: name});
+      sel = id;
+      $('newname').value = '';
+      $('newset').classList.remove('on');
+      status('Set „' + name + '“ angelegt. Jetzt Bilder hinzufügen.', 'ok');
+    });
+  }
+  $('newok').onclick = newSet;
+  $('newname').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); newSet(); } });
+  $('activate').onclick = function () {
+    var s = sel;
+    tell({art: 'activate', s: s}, function () { tv.active = s; status('„' + setById(s).name + '“ läuft jetzt im Bilderrahmen.', 'ok'); });
+  };
+  $('renameset').onclick = function () {
+    var x = setById(sel), name = x && prompt('Neuer Name für das Set:', x.name);
+    if (!name || !name.trim()) return;
+    tell({art: 'rename', s: x.id, name: name.trim()}, function () { x.name = name.trim(); });
+  };
+  $('delset').onclick = function () {
+    var x = setById(sel);
+    if (!x || tv.sets.length < 2 || !confirm('Set „' + x.name + '“ mit allen Bildern vom TV löschen?')) return;
+    tell({art: 'delset', s: x.id}, function () {
+      tv.sets = tv.sets.filter(function (y) { return y.id !== x.id; });
+      tv.pics = tv.pics.filter(function (p) { return p.s !== x.id; });
+      if (tv.active === x.id) tv.active = tv.sets[0].id;
+      sel = tv.active;
+    });
+  };
+  $('artclear').onclick = function () {
+    var x = setById(sel);
+    if (busy || !x || !confirm('Alle Bilder aus „' + x.name + '“ vom TV löschen?')) return;
+    tell({art: 'clear', s: x.id}, function () { tv.pics = tv.pics.filter(function (p) { return p.s !== x.id; }); });
+  };
+
+  // MARK: - One picture: show, crop again, delete
+
+  // The pictures sent from this phone keep their original here, so their crop can change later without sending
+  // them again from the gallery.
+  var origDb = null;
+  function orig(fn) {
+    if (origDb) { fn(origDb); return; }
+    var r = indexedDB.open('tvnotiz', 1);
+    r.onupgradeneeded = function () { r.result.createObjectStore('orig', {keyPath: 'id'}); };
+    r.onsuccess = function () { origDb = r.result; fn(origDb); };
+    r.onerror = function () { fn(null); };
+  }
+  function origGet(id, done) {
+    orig(function (d) {
+      if (!d) { done(null); return; }
+      var q = d.transaction('orig').objectStore('orig').get(id);
+      q.onsuccess = function () { done(q.result || null); };
+      q.onerror = function () { done(null); };
+    });
+  }
+  function origPut(rec) { orig(function (d) { if (d) d.transaction('orig', 'readwrite').objectStore('orig').put(rec); }); }
+
+  var menuPic = null;
+  function openMenu(p) {
+    menuPic = p;
+    $('picmenu-img').src = p.t;
+    $('pm-crop').disabled = true;
+    $('pm-crop').textContent = 'Ausschnitt ändern';
+    origGet(p.id, function (rec) {
+      if (menuPic !== p) return;
+      $('pm-crop').disabled = !rec;
+      if (!rec) $('pm-crop').textContent = 'Ausschnitt ändern (nur vom Handy, das es geschickt hat)';
+    });
+    $('picmenu').classList.add('on');
+  }
+  function closeMenu() { $('picmenu').classList.remove('on'); menuPic = null; }
+  $('pm-cancel').onclick = closeMenu;
+  $('picmenu').onclick = function (e) { if (e.target === $('picmenu')) closeMenu(); };
+  $('pm-show').onclick = function () {
+    var p = menuPic;
+    closeMenu();
+    tell({art: 'show', t: p.id}, function () { status('Kommt am TV als Nächstes.', 'ok'); });
+  };
+  $('pm-del').onclick = function () {
+    var p = menuPic;
+    closeMenu();
+    tell({art: 'remove', t: p.id}, function () {
+      tv.pics = tv.pics.filter(function (x) { return x.id !== p.id; });
       status('Bild vom TV gelöscht.', 'ok');
-    }, function (e) { status(why(e), 'warn'); });
-  }
-  function rememberSent(blob, id) {
-    var t = document.createElement('canvas'), img = new Image();
+    });
+  };
+  $('pm-crop').onclick = function () {
+    var p = menuPic;
+    closeMenu();
+    origGet(p.id, function (rec) {
+      if (!rec) return;
+      var img = new Image();
+      img.onload = function () { openEditor({img: img, file: rec.blob, z: rec.z, cx: rec.cx, cy: rec.cy, again: p}); };
+      img.src = URL.createObjectURL(rec.blob);
+    });
+  };
+
+  /** A small 320 × 180 picture of a 16:9 Blob, for the list. */
+  function thumbOf(blob, done) {
+    var img = new Image();
     img.onload = function () {
-      t.width = 320;
-      t.height = 180;
-      t.getContext('2d').drawImage(img, 0, 0, 320, 180);
-      var list = sentList();
-      list.push({id: id, src: t.toDataURL('image/jpeg', 0.7)});
-      try { localStorage.setItem(SENT, JSON.stringify(list.slice(-40))); } catch (e) {}
-      showSent();
+      var c = document.createElement('canvas');
+      c.width = 320;
+      c.height = 180;
+      c.getContext('2d').drawImage(img, 0, 0, 320, 180);
+      done(c.toDataURL('image/jpeg', 0.7));
     };
     img.src = URL.createObjectURL(blob);
   }
+
+  /** One picture to the TV: its crop uploaded, then the message with its id and set; the original kept here. */
+  function sendPicture(c, id, set) {
+    return new Promise(function (ok) { cropBlob(c, ok); }).then(function (blob) {
+      return upload(blob).then(function (url) {
+        return put(JSON.stringify({v: 1, art: 'add', id: rid(), p: id, s: set, u: url}));
+      }).then(function () {
+        origPut({id: id, blob: c.file, z: c.z, cx: c.cx, cy: c.cy});
+        return new Promise(function (ok) {
+          thumbOf(blob, function (t) {
+            tv.pics = tv.pics.filter(function (x) { return x.id !== id; });
+            tv.pics.push({id: id, at: Date.now() / 1000, s: set, t: t});
+            saveTv();
+            renderPics();
+            ok();
+          });
+        });
+      });
+    });
+  }
+
+  // The editor's Fertig: for a picture already on the TV, its new crop goes there right away.
+  $('editdone').addEventListener('click', function () {
+    var c = lastEdited;
+    if (!c || !c.again) return;
+    status('Neuer Ausschnitt wird gesendet …');
+    sendPicture(c, c.again.id, c.again.s).then(function () { status('Neuer Ausschnitt ist am TV.', 'ok'); },
+      function (e) { status(why(e), 'warn'); });
+  });
 
   $('artsend').onclick = function () {
     if (busy || !crops.length) return;
     busy = true;
     $('artsend').disabled = $('artadd').disabled = true;
-    var done = 0;
+    var done = 0, set = sel;
     function next() {
       if (!crops.length) {
         busy = false;
@@ -729,12 +916,7 @@
       }
       var c = crops[0];
       status('Bild ' + (done + 1) + ' wird hochgeladen …');
-      new Promise(function (ok) { cropBlob(c, ok); }).then(function (blob) {
-        return upload(blob).then(function (url) {
-          var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-          return put(JSON.stringify({v: 1, art: 'add', id: id, u: url})).then(function () { rememberSent(blob, id); });
-        });
-      }).then(function () {
+      sendPicture(c, 'p' + rid(), set).then(function () {
         done++;
         crops.shift();
         c.box.remove();
@@ -748,16 +930,8 @@
     }
     next();
   };
-  $('artclear').onclick = function () {
-    if (busy || !confirm('Alle Bilder vom TV löschen?')) return;
-    put(JSON.stringify({v: 1, art: 'clear', id: Date.now().toString(36)})).then(function () {
-      try { localStorage.removeItem(SENT); } catch (e) {}
-      showSent();
-      status('Bilder werden vom TV gelöscht.', 'ok');
-    }, function (e) { status(why(e), 'warn'); });
-  };
-  showSent();
-  // How the TV shows them: sent at once, kept here to show what was picked last (the TV can't be asked).
+
+  // How the TV shows them: sent at once, kept here to show what was picked last.
   var FRAME = 'tvnotiz.frame', frame = {every: 300, order: 'random'};
   try { var kept = JSON.parse(localStorage.getItem(FRAME)); if (kept) frame = kept; } catch (e) {}
   function segment(box, choices, key) {
@@ -768,8 +942,7 @@
         var before = frame[key];
         frame[key] = ch[0];
         paint();
-        put(JSON.stringify({v: 1, art: 'settings', id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-          every: frame.every, order: frame.order})).then(function () {
+        put(JSON.stringify({v: 1, art: 'settings', id: rid(), every: frame.every, order: frame.order})).then(function () {
           try { localStorage.setItem(FRAME, JSON.stringify(frame)); } catch (e) {}
           status('Am TV eingestellt.', 'ok');
         }, function (e) {
@@ -781,7 +954,6 @@
       box.appendChild(b);
     });
     function paint() { [].forEach.call(box.children, function (b, i) { b.classList.toggle('on', choices[i][0] === frame[key]); }); }
-    box.paint = paint;
     paint();
   }
   segment($('every'), [[10, '10 s'], [30, '30 s'], [60, '1 Min'], [300, '5 Min'], [600, '10 Min']], 'every');
@@ -792,20 +964,20 @@
     $('tab-note').classList.toggle('on', !art);
     $('tab-art').classList.toggle('on', art);
     try { localStorage.setItem('tvnotiz.tab', art ? 'art' : 'note'); } catch (e) {}   // a reload comes back here
-    if (art) askTv(); else fit();
+    if (art) { renderAll(); askTv(); } else fit();
   }
   $('tab-note').onclick = function () { tab(false); };
   $('tab-art').onclick = function () { tab(true); };
 
   /**
-   * What's on the TV, from the TV: a question on the channel, and the TV (with Free My TV open) answers with small
-   * pictures of all it has, from any phone. Until it answers, or if it's off, the list last seen stays.
+   * What's on the TV, from the TV: a question on the channel, and the TV (with Free My TV open) answers with its sets
+   * and small pictures of all it has, from any phone. Until it answers, or if it's off, the last answer stays.
    */
-  var asking = 0;
+  var asking = 0, answered = false;
   function askTv() {
-    var id = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), since = Math.floor(Date.now() / 1000) - 5;
-    var mine = ++asking, tries = 0;
-    $('ontv-title').textContent = 'Auf dem TV (frage den TV …)';
+    var id = 'q' + rid(), since = Math.floor(Date.now() / 1000) - 5, mine = ++asking, tries = 0;
+    answered = false;
+    renderPics();
     put(JSON.stringify({v: 1, art: 'listreq', id: id})).then(function () {
       (function look() {
         if (mine !== asking) return;
@@ -821,18 +993,20 @@
             } catch (e) {}
           });
           var whole = n && parts.filter(function (x) { return x !== undefined; }).length === n;
-          if (url || whole) return (url ? fetch(url).then(function (r) { return r.json(); }) : Promise.resolve(JSON.parse(parts.join('')))).then(function (list) {
+          if (url || whole) return (url ? fetch(url).then(function (r) { return r.json(); }) : Promise.resolve(JSON.parse(parts.join('')))).then(function (a) {
             if (mine !== asking) return;
-            var shown = list.sort(function (a, b) { return a.at - b.at; }).map(function (p) { return {id: p.id, src: p.t}; });
-            try { localStorage.setItem(SENT, JSON.stringify(shown)); } catch (e) {}
-            showSent();
+            answered = true;
+            tv = Array.isArray(a) ? {sets: tv.sets, active: tv.active, pics: a.map(function (p) { p.s = p.s || 'main'; return p; })} : a;
+            saveTv();
+            renderAll();
           });
-          if (++tries < 12) { setTimeout(look, 2000); return; }
-          showSent();
+          if (++tries < 25) { setTimeout(look, 1000); return; }
+          answered = true;
+          renderPics();
           $('ontv-title').textContent += ', TV antwortet nicht. Ist Free My TV offen?';
-        }, function () { if (++tries < 12) setTimeout(look, 2000); });
+        }, function () { if (++tries < 25) setTimeout(look, 1000); });
       })();
-    }, function (e) { showSent(); status(why(e), 'warn'); });
+    }, function (e) { answered = true; renderPics(); status(why(e), 'warn'); });
   }
 
   // MARK: - Colors and sizes
